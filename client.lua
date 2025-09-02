@@ -114,6 +114,50 @@ Mining.Functions.setupMiningTarget = function(name, coords, prop, emptyProp, set
 	}, 1.7)
 end
 
+function craftingMenu(data)
+    local craftable = data.craftable
+    if not craftable then return end
+
+    local Menu = {}
+    for _, recipe in ipairs(craftable.Recipes) do
+        for result, ingredients in pairs(recipe) do
+            if result ~= "amount" then
+                local txt = ""
+                for ingredient, amount in pairs(ingredients) do
+                    txt = txt .. Items[ingredient].label .. " x" .. amount .. " "
+                end
+
+                Menu[#Menu+1] = {
+                    header = Items[result] and Items[result].label or result,
+                    txt = "Requires: " .. txt,
+                    onSelect = function()
+                        if progressBar(craftable.progressBar) then
+                            TriggerServerEvent(getScript()..":CraftItem", {
+                                result = result,
+                                recipe = recipe
+                            })
+                        end
+                    end,
+                }
+            end
+        end
+    end
+
+    Menu[#Menu+1] = {
+        header = "⬅ Back",
+        txt = "",
+        onSelect = function()
+            if data.onBack then data.onBack() end
+        end
+    }
+
+    openMenu(Menu, {
+        header = craftable.Header,
+        canClose = true,
+    })
+end
+
+
 Mining.Functions.makeJob = function()
 	Mining.Functions.removeJob()
 	if Locations["Mines"]["MineShaft"].Enable then
