@@ -1,4 +1,5 @@
 local Props, Targets, Peds, Blip, soundId = {}, {}, {}, {}, GetSoundId()
+local QBCore = rawget(_G, 'QBCore') or exports['qb-core']:GetCoreObject()
 
 Mining = {
 	Functions = {},
@@ -75,7 +76,7 @@ Mining.Functions.setupMiningTarget = function(name, coords, prop, emptyProp, set
 			icon = "fas fa-hammer",
 			item = "pickaxe",
 			label = locale("info", "mine_ore")..
-					" ("..(Items["pickaxe"] and Items["pickaxe"].label or "pickaxe❌")..") "..
+					" ("..(Items["pickaxe"] and Items["pickaxe"].label or "pickaxe?")..") "..
 					(Config.General.AltMining and Items[setReward].label or "")..
 					(debugMode and " ["..name.."]" or ""),
 			job = job,
@@ -89,7 +90,7 @@ Mining.Functions.setupMiningTarget = function(name, coords, prop, emptyProp, set
 			icon = "fas fa-screwdriver",
 			item = "miningdrill",
 			label = locale("info", "mine_ore")..
-					" ("..(Items["miningdrill"] and Items["miningdrill"].label or "miningdrill❌")..")"..
+					" ("..(Items["miningdrill"] and Items["miningdrill"].label or "miningdrill?")..")"..
 					(Config.General.AltMining and Items[setReward].label or "")..
 					(debugMode and " ["..name.."]" or ""),
 			job = job,
@@ -103,7 +104,7 @@ Mining.Functions.setupMiningTarget = function(name, coords, prop, emptyProp, set
 			icon = "fas fa-screwdriver-wrench",
 			item = "mininglaser",
 			label = locale("info", "mine_ore")..
-					" ("..(Items["mininglaser"] and Items["mininglaser"].label or "mininglaser❌")..")"..
+					" ("..(Items["mininglaser"] and Items["mininglaser"].label or "mininglaser?")..")"..
 					(Config.General.AltMining and Items[setReward].label or "")..
 					(debugMode and " ["..name.."]" or ""),
 			job = job,
@@ -114,37 +115,96 @@ Mining.Functions.setupMiningTarget = function(name, coords, prop, emptyProp, set
 	}, 1.7)
 end
 
+-- client/crafting.lua
+
+local function _label(item)
+    return (Items[item] and Items[item].label) or item
+end
+
 function craftingMenu(data)
     local craftable = data.craftable
     if not craftable then return end
 
     local Menu = {}
-    for _, recipe in ipairs(craftable.Recipes) do
-        for result, ingredients in pairs(recipe) do
-            if result ~= "amount" then
-                local txt = ""
-                for ingredient, amount in pairs(ingredients) do
-                    txt = txt .. Items[ingredient].label .. " x" .. amount .. " "
-                end
 
-                Menu[#Menu+1] = {
-                    header = Items[result] and Items[result].label or result,
-                    txt = "Requires: " .. txt,
-                    onSelect = function()
-                        if progressBar(craftable.progressBar) then
-                            TriggerServerEvent(getScript()..":CraftItem", {
-                                result = result,
-                                recipe = recipe
+    for _, recipe in ipairs(craftable.Recipes) do
+        -- recipe shape: { ["RESULT_ITEM"] = { ["ing1"]=x, ["ing2"]=y }, ["amount"]=N? }
+        local result, ingredients
+        for k, v in pairs(recipe) do
+            if k ~= "amount" then result, ingredients = k, v; break end
+        end
+        if result and ingredients then
+            -- Build UI text
+            local needs = {}
+            for ing, amt in pairs(ingredients) do
+                if ing ~= "amount" then
+                    needs[#needs+1] = string.format("%s x%d", _label(ing), amt)
+                end
+            end
+            local requirementsText = ("Requires: %s"):format(table.concat(needs, ", "))
+
+            Menu[#Menu+1] = {
+                header = _label(result),
+                txt = requirementsText,
+                onSelect = function()
+                    -- ? Ask server if we can craft BEFORE starting progress bar
+                    QBCore.Functions.TriggerCallback(getScript()..":canCraft", function(ok, missing, amt)
+						print("canCraft reply", ok, missing, amt) -- debug print
+                        if not ok then
+                            -- Show clear error and DO NOT start progress bar
+                            triggerNotify(nil, ("Missing %s x%d"):format(_label(missing or "item"), tonumber(amt or 1)), "error")
+                            return
+                        end
+
+                        -- Optional anim/sound
+                        local stopAnim = function() end
+                        local soundIdLocal
+
+                        if craftable.anims and craftable.anims.animDict and craftable.anims.anim then
+                            local ped = PlayerPedId()
+                            RequestAnimDict(craftable.anims.animDict)
+                            while not HasAnimDictLoaded(craftable.anims.animDict) do Wait(0) end
+                            TaskPlayAnim(ped, craftable.anims.animDict, craftable.anims.anim, 1.0, 1.0, -1, 1, 0, false, false, false)
+                            stopAnim = function()
+                                StopAnimTask(ped, craftable.anims.animDict, craftable.anims.anim, 1.0)
+                                RemoveAnimDict(craftable.anims.animDict)
+                            end
+                        end
+
+                        if data.sound and data.sound.soundId and data.sound.audioName and data.sound.audioRef then
+                            soundIdLocal = data.sound.soundId
+                            PlaySoundFromCoord(soundIdLocal, data.sound.audioName, data.coords or GetEntityCoords(PlayerPedId()), data.sound.audioRef, 0, 4.5, 0)
+                        end
+
+                        local okProgress = true
+                        if craftable.progressBar then
+                            okProgress = progressBar({
+                                label = craftable.progressBar.label or "Crafting",
+                                time  = craftable.progressBar.time or 4000,
+                                cancel = true,
+                                icon = result
                             })
                         end
-                    end,
-                }
-            end
+
+                        -- stop fx
+                        stopAnim()
+                        if soundIdLocal then StopSound(soundIdLocal) end
+
+                        if not okProgress then return end
+
+                        -- Server does the real consume & reward (with its own re-check)
+                        TriggerServerEvent(getScript()..":CraftItem", {
+                            result = result,
+                            recipe = recipe, -- includes ['amount'] if present
+                        })
+                    end, recipe)
+                end,
+            }
         end
     end
 
     Menu[#Menu+1] = {
-        header = "⬅ Back",
+        header = "? Back",
         txt = "",
         onSelect = function()
             if data.onBack then data.onBack() end
