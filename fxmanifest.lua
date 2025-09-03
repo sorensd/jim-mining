@@ -1,6 +1,6 @@
 name "Jim-Mining"
 author "Jimathy"
-version "3.0.09"
+version "3.0.10"
 description "Mining Script"
 fx_version "cerulean"
 game "gta5"
@@ -23,4 +23,8 @@ client_scripts {
 
 server_script 'server.lua'
 
-dependency 'jim_bridge'
+dependencies {
+    'qb-core',
+    'jim_bridge'
+}
+ 
