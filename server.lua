@@ -1,3 +1,6 @@
+-- TOP OF server.lua
+local QBCore = rawget(_G, 'QBCore') or exports['qb-core']:GetCoreObject()
+
 local function GetRandItemFromTable(table)
     debugPrint("^5Debug^7: ^2Picking random item from table^7")
     ::start::
@@ -17,34 +20,70 @@ local function GetRandItemFromTable(table)
     return selectedItem
 end
 
--- ✅ New Crafting Event
-RegisterServerEvent(getScript()..":CraftItem", function(data)
-    local src = source
-    local result = data.result
-    local recipe = data.recipe
-    if not result or not recipe then return end
+-- Authoritative pre-check before starting any crafting progress
+QBCore.Functions.CreateCallback(getScript()..":canCraft", function(src, cb, recipe)
+    print(("[jim-mining] canCraft requested by %s"):format(src))
+    if type(recipe) ~= "table" then cb(false, "invalid_recipe", 0) return end
 
-    -- check ingredients
-    for ingredient, amount in pairs(recipe) do
-        if ingredient ~= "amount" then
-            if not hasItem(ingredient, amount, src) then
-                triggerNotify(nil, "Missing " .. ingredient, "error", src)
+    local ingredients
+    for k, v in pairs(recipe) do
+        if k ~= "amount" then ingredients = v break end
+    end
+    if type(ingredients) ~= "table" then cb(false, "invalid_ingredients", 0) return end
+
+    for ing, amt in pairs(ingredients) do
+        if ing ~= "amount" then
+            if not hasItem(ing, amt, src) then
+                print(("[jim-mining] canCraft FAIL (%s x%d)"):format(ing, amt))
+                cb(false, ing, tonumber(amt) or 1)
                 return
             end
         end
     end
 
-    -- remove inputs
-    for ingredient, amount in pairs(recipe) do
-        if ingredient ~= "amount" then
-            removeItem(ingredient, amount, src)
+    print("[jim-mining] canCraft OK")
+    cb(true)
+end)
+
+-- New Crafting Event (iterate ingredients?not the root recipe table)
+RegisterServerEvent(getScript()..":CraftItem")
+AddEventHandler(getScript()..":CraftItem", function(data)
+    local src = source
+    local recipe = data and data.recipe
+    if type(recipe) ~= "table" then return end
+
+    local resultName, ingredients
+    for k, v in pairs(recipe) do
+        if k ~= "amount" then resultName, ingredients = k, v break end
+    end
+    if not resultName or type(ingredients) ~= "table" then return end
+
+    print(("[jim-mining] CraftItem %s x%s by %s"):format(resultName, tostring(recipe.amount or 1), src))
+
+    -- Check inputs
+    for item, need in pairs(ingredients) do
+        if item ~= "amount" then
+            if not hasItem(item, need, src) then
+                triggerNotify(nil, "Missing " .. item, "error", src)
+                print(("[jim-mining] CraftItem FAIL missing %s x%d"):format(item, need))
+                return
+            end
         end
     end
 
-    -- give result
-    local count = recipe.amount or 1
-    addItem(result, count, nil, src)
+    -- Remove inputs
+    for item, need in pairs(ingredients) do
+        if item ~= "amount" then
+            removeItem(item, need, src)
+        end
+    end
+
+    -- Give output
+    local outCount = recipe.amount or 1
+    addItem(resultName, outCount, nil, src)
+    print(("[jim-mining] CraftItem DONE %s x%d"):format(resultName, outCount))
 end)
+
 
 -- Existing Reward Event (unchanged)
 RegisterServerEvent(getScript()..":Reward", function(data)
